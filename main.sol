@@ -669,3 +669,64 @@ contract LamaXII is LMX_Reentrancy, LMX_Own2Step, LMX_Pause, LMX_EIP712Domain {
         if (oracleSigner == address(0)) revert LMXx_OracleUnconfigured();
         if (oracleNonce_ <= oracleNonce) revert LMXx_BadNonce();
 
+        bytes32 structHash = keccak256(abi.encode(LMX_MARKET_TYPEHASH, marketId, m.symbol, priceE8, m.lockAt, m.closeAt, oracleNonce_, meta));
+        bytes32 digest = _hashTyped(structHash);
+        if (usedOracleDigests[digest]) revert LMXx_BadNonce();
+        usedOracleDigests[digest] = true;
+        address signer = LMX_ECDSA.recover(digest, sig);
+        if (signer != oracleSigner) revert LMXx_Unauth();
+        oracleNonce = oracleNonce_;
+
+        uint8 win = previewBucket(m.strikeE8, m.flatBandE8, priceE8);
+        MarketPools memory ps = pools[marketId];
+        uint128 winPool = poolOf(marketId, win);
+
+        marketFlags[marketId] = marketFlags[marketId].set(_FLAG_SETTLED);
+        settles[marketId] = MarketSettle(priceE8, win, uint40(block.timestamp), m.lockAt, m.closeAt, meta);
+        emit LMX_MarketSettled(marketId, priceE8, win, ps.poolTotal, winPool);
+    }
+
+    function claim(uint256 marketId) external nonReentrant {
+        Ticket storage tk = tickets[marketId][msg.sender];
+        if (tk.claimed) revert LMXx_ClaimNone();
+        if (tk.stake == 0) revert LMXx_ClaimNone();
+
+        if (isCancelled(marketId)) {
+            tk.claimed = true;
+            uint128 back = tk.stake;
+            if (back != 0) COLLATERAL.safeTransfer(msg.sender, back);
+            emit LMX_Claimed(marketId, msg.sender, back, back, tk.bucket);
+            return;
+        }
+
+        if (!isSettled(marketId)) revert LMXx_NotSettled();
+        MarketSettle memory st = settles[marketId];
+        MarketPools memory ps = pools[marketId];
+        uint8 b = tk.bucket;
+        uint128 userStake = tk.stake;
+        uint128 winPool = poolOf(marketId, st.winnerBucket);
+        tk.claimed = true;
+
+        if (b != st.winnerBucket || winPool == 0) {
+            emit LMX_Claimed(marketId, msg.sender, 0, 0, b);
+            return;
+        }
+
+        uint256 gross = LMX_Math.mulDivDown(uint256(ps.poolTotal), uint256(userStake), uint256(winPool));
+        if (gross > type(uint128).max) revert LMXx_Overflow();
+        uint256 fee = LMX_Math.mulDivUp(gross, claimFeeBps, 10_000);
+        uint256 net = gross - fee;
+        if (net > type(uint128).max) revert LMXx_Overflow();
+        pools[marketId].feeTotal = uint128(uint256(pools[marketId].feeTotal) + fee);
+        if (net != 0) COLLATERAL.safeTransfer(msg.sender, net);
+        emit LMX_Claimed(marketId, msg.sender, uint128(net), 0, b);
+    }
+
+    function sweepFees(uint256 amount) external nonReentrant {
+        address vault = feeVault;
+        if (vault == address(0)) revert LMXx_BadCfg();
+        if (msg.sender != vault && msg.sender != owner) revert LMXx_Unauth();
+        uint256 bal = COLLATERAL.balanceOf(address(this));
+        uint256 x = LMX_Math.min(amount, bal);
+        if (x == 0) return;
+        COLLATERAL.safeTransfer(vault, x);
