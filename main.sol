@@ -608,3 +608,64 @@ contract LamaXII is LMX_Reentrancy, LMX_Own2Step, LMX_Pause, LMX_EIP712Domain {
     function bucketLabel(uint8 bucket) external pure returns (bytes32) {
         if (bucket == _B_UP) return keccak256("LMX.BUCKET.UP");
         if (bucket == _B_DOWN) return keccak256("LMX.BUCKET.DOWN");
+        if (bucket == _B_FLAT) return keccak256("LMX.BUCKET.FLAT");
+        return bytes32(0);
+    }
+
+    function placeBet(uint256 marketId, uint8 bucket, uint128 stake, bool isTaker) external nonReentrant whenLive {
+        if (stake == 0) revert LMXx_Amount0();
+        if (stake < LMX_MIN_STAKE || stake > LMX_MAX_STAKE) revert LMXx_BadCfg();
+        if (bucket >= LMX_BUCKETS) revert LMXx_BadBucket();
+        MarketFrame memory m = markets[marketId];
+        if (m.openAt == 0) revert LMXx_BadMarket();
+        if (isCancelled(marketId)) revert LMXx_Cancelled();
+        if (isSettled(marketId)) revert LMXx_Settled();
+        uint256 t = block.timestamp;
+        if (t < m.openAt) revert LMXx_TooEarly();
+        if (t >= m.lockAt) revert LMXx_Late();
+        Ticket storage tk = tickets[marketId][msg.sender];
+        if (tk.stake != 0) revert LMXx_BadCfg();
+
+        uint256 fee = quoteFee(stake, isTaker);
+        uint256 net = stake - fee;
+        if (net == 0) revert LMXx_BadCfg();
+        COLLATERAL.safeTransferFrom(msg.sender, address(this), stake);
+
+        MarketPools storage ps = pools[marketId];
+        ps.poolTotal = uint128(uint256(ps.poolTotal) + net);
+        ps.feeTotal = uint128(uint256(ps.feeTotal) + fee);
+        if (bucket == _B_UP) ps.poolUp = uint128(uint256(ps.poolUp) + net);
+        else if (bucket == _B_DOWN) ps.poolDown = uint128(uint256(ps.poolDown) + net);
+        else ps.poolFlat = uint128(uint256(ps.poolFlat) + net);
+
+        if (stakeByUser[marketId][msg.sender] == 0) participantCount[marketId] = participantCount[marketId] + 1;
+        stakeByUser[marketId][msg.sender] = stake;
+
+        tk.stake = uint128(net);
+        tk.bucket = bucket;
+        tk.claimed = false;
+        emit LMX_BetSlip(marketId, msg.sender, bucket, uint128(net), uint128(fee));
+    }
+
+    function cancelMarket(uint256 marketId, bytes32 reasonHash) external onlyOwner whenLive {
+        if (markets[marketId].openAt == 0) revert LMXx_BadMarket();
+        if (isSettled(marketId)) revert LMXx_Settled();
+        if (isCancelled(marketId)) revert LMXx_Cancelled();
+        marketFlags[marketId] = marketFlags[marketId].set(_FLAG_CANCELLED);
+        emit LMX_MarketCancelled(marketId, reasonHash);
+    }
+
+    function settleMarket(uint256 marketId, uint64 priceE8, uint256 oracleNonce_, bytes32 meta, bytes calldata sig)
+        external
+        nonReentrant
+        whenLive
+    {
+        MarketFrame memory m = markets[marketId];
+        if (m.openAt == 0) revert LMXx_BadMarket();
+        if (isCancelled(marketId)) revert LMXx_Cancelled();
+        if (isSettled(marketId)) revert LMXx_Settled();
+        if (priceE8 == 0) revert LMXx_PriceInvalid();
+        if (block.timestamp < m.closeAt) revert LMXx_TooEarly();
+        if (oracleSigner == address(0)) revert LMXx_OracleUnconfigured();
+        if (oracleNonce_ <= oracleNonce) revert LMXx_BadNonce();
+
