@@ -364,3 +364,64 @@ contract LamaXII is LMX_Reentrancy, LMX_Own2Step, LMX_Pause, LMX_EIP712Domain {
     function setRoles(address oracleSigner_, address feeVault_) external onlyOwner {
         if (oracleSigner_ == address(0) || feeVault_ == address(0)) revert LMXx_BadCfg();
         oracleSigner = oracleSigner_;
+        feeVault = feeVault_;
+        emit LMX_RoleShift(msg.sender, oracleSigner_, feeVault_);
+    }
+
+    function setFees(uint16 makerFeeBps_, uint16 takerFeeBps_, uint16 claimFeeBps_, uint32 feeFloor_) external onlyOwner {
+        if (makerFeeBps_ > 950 || takerFeeBps_ > 950 || claimFeeBps_ > 950) revert LMXx_FeeTooHigh();
+        makerFeeBps = makerFeeBps_;
+        takerFeeBps = takerFeeBps_;
+        claimFeeBps = claimFeeBps_;
+        feeFloor = feeFloor_;
+        emit LMX_FeeCurve(makerFeeBps_, takerFeeBps_, claimFeeBps_, feeFloor_);
+    }
+
+    function listMarket(
+        bytes32 symbol,
+        uint40 openAt,
+        uint40 lockAt,
+        uint40 closeAt,
+        uint64 strikeE8,
+        uint32 flatBandE8,
+        uint32 maxBets,
+        uint32 feeHint
+    ) external onlyOwner whenLive returns (uint256 marketId) {
+        if (symbol == bytes32(0)) revert LMXx_BadSymbol();
+        uint256 nowT = block.timestamp;
+        if (openAt < nowT + LMX_MIN_OPEN) revert LMXx_BadWindow();
+        if (lockAt < openAt + LMX_MIN_LOCK_GAP) revert LMXx_BadWindow();
+        if (closeAt < lockAt + LMX_MIN_CLOSE_GAP) revert LMXx_BadWindow();
+        if (closeAt > nowT + LMX_MAX_HORIZON) revert LMXx_BadWindow();
+        if (strikeE8 == 0) revert LMXx_BadCfg();
+        if (flatBandE8 == 0 || flatBandE8 > 5_000_000_000) revert LMXx_BadCfg();
+        marketId = ++marketCount;
+        markets[marketId] = MarketFrame(symbol, openAt, lockAt, closeAt, strikeE8, flatBandE8, maxBets, feeHint);
+        emit LMX_MarketListed(marketId, symbol, openAt, lockAt, closeAt);
+    }
+
+    function listMarketBatch(MarketFrame[] calldata frames) external onlyOwner whenLive returns (uint256 firstId, uint256 lastId) {
+        uint256 n = frames.length;
+        if (n == 0) revert LMXx_BadCfg();
+        firstId = marketCount + 1;
+        for (uint256 i = 0; i < n; i++) {
+            MarketFrame calldata f = frames[i];
+            _listOne(f.symbol, f.openAt, f.lockAt, f.closeAt, f.strikeE8, f.flatBandE8, f.maxBets, f.feeHint);
+        }
+        lastId = marketCount;
+    }
+
+    function _listOne(
+        bytes32 symbol,
+        uint40 openAt,
+        uint40 lockAt,
+        uint40 closeAt,
+        uint64 strikeE8,
+        uint32 flatBandE8,
+        uint32 maxBets,
+        uint32 feeHint
+    ) internal {
+        if (symbol == bytes32(0)) revert LMXx_BadSymbol();
+        uint256 nowT = block.timestamp;
+        if (openAt < nowT + LMX_MIN_OPEN) revert LMXx_BadWindow();
+        if (lockAt < openAt + LMX_MIN_LOCK_GAP) revert LMXx_BadWindow();
