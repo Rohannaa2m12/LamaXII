@@ -181,3 +181,64 @@ contract LamaXII is LMX_Reentrancy, LMX_Own2Step, LMX_Pause, LMX_EIP712Domain {
 
     event LMX_TerminalBoot(bytes32 indexed bootId, address indexed owner, address indexed guardian, address asset);
     event LMX_RoleShift(address indexed by, address indexed oracle, address indexed feeVault);
+    event LMX_FeeCurve(uint16 makerBps, uint16 takerBps, uint16 claimBps, uint32 feeFloor);
+    event LMX_MarketListed(uint256 indexed marketId, bytes32 indexed symbol, uint40 openAt, uint40 lockAt, uint40 closeAt);
+    event LMX_BetSlip(uint256 indexed marketId, address indexed user, uint8 indexed bucket, uint128 stake, uint128 fee);
+    event LMX_MarketCancelled(uint256 indexed marketId, bytes32 reasonHash);
+    event LMX_MarketSettled(uint256 indexed marketId, uint64 indexed priceE8, uint8 indexed winnerBucket, uint128 totalPool, uint128 winningPool);
+    event LMX_Claimed(uint256 indexed marketId, address indexed user, uint128 payout, uint128 stakeBack, uint8 bucket);
+    event LMX_ProtocolSweep(address indexed to, uint256 amount);
+    event LMX_MarketSwept(uint256 indexed marketId, uint256 amount, address indexed to);
+
+    uint256 public constant LMX_BUCKETS = 3;
+    uint8 internal constant _B_UP = 0;
+    uint8 internal constant _B_DOWN = 1;
+    uint8 internal constant _B_FLAT = 2;
+    uint256 internal constant _FLAG_SETTLED = 0;
+    uint256 internal constant _FLAG_CANCELLED = 1;
+    uint256 internal constant _FLAG_SWEPT = 2;
+
+    bytes32 public constant LMX_BOOT_SALT = keccak256("LamaXII.bootsalt.violet-hedge");
+    bytes32 public constant LMX_MARKET_TYPEHASH = keccak256(
+        "MarketSettle(uint256 marketId,bytes32 symbol,uint64 priceE8,uint40 lockAt,uint40 closeAt,uint256 oracleNonce,bytes32 meta)"
+    );
+    bytes32 public constant LMX_ORACLE_ROTATE_TYPEHASH =
+        keccak256("OracleRotate(address oracle,uint256 effectiveAt,uint256 nonce,bytes32 memo)");
+
+    IERC20 public immutable COLLATERAL;
+    uint8 public immutable COLLATERAL_DECIMALS;
+
+    address public oracleSigner;
+    address public feeVault;
+    uint16 public makerFeeBps;
+    uint16 public takerFeeBps;
+    uint16 public claimFeeBps;
+    uint32 public feeFloor;
+
+    uint32 public immutable LMX_MIN_OPEN;
+    uint32 public immutable LMX_MIN_LOCK_GAP;
+    uint32 public immutable LMX_MIN_CLOSE_GAP;
+    uint32 public immutable LMX_MAX_HORIZON;
+    uint128 public immutable LMX_MIN_STAKE;
+    uint128 public immutable LMX_MAX_STAKE;
+
+    event LMX_OracleScheduled(address indexed nextOracle, uint40 indexed executeAfter, bytes32 memo);
+    event LMX_OracleActivated(address indexed oracle, address indexed by);
+
+    address public scheduledOracle;
+    uint40 public scheduledOracleAt;
+    bytes32 public scheduledOracleMemo;
+
+    struct MarketFrame {
+        bytes32 symbol;
+        uint40 openAt;
+        uint40 lockAt;
+        uint40 closeAt;
+        uint64 strikeE8;
+        uint32 flatBandE8;
+        uint32 maxBets;
+        uint32 feeHint;
+    }
+    struct MarketPools {
+        uint128 poolUp;
+        uint128 poolDown;
