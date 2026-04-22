@@ -242,3 +242,64 @@ contract LamaXII is LMX_Reentrancy, LMX_Own2Step, LMX_Pause, LMX_EIP712Domain {
     struct MarketPools {
         uint128 poolUp;
         uint128 poolDown;
+        uint128 poolFlat;
+        uint128 poolTotal;
+        uint128 feeTotal;
+    }
+    struct MarketSettle {
+        uint64 priceE8;
+        uint8 winnerBucket;
+        uint40 settledAt;
+        uint40 oracleLockAt;
+        uint40 oracleCloseAt;
+        bytes32 meta;
+    }
+    struct Ticket {
+        uint128 stake;
+        uint8 bucket;
+        bool claimed;
+    }
+
+    uint256 public marketCount;
+    mapping(uint256 => MarketFrame) public markets;
+    mapping(uint256 => MarketPools) public pools;
+    mapping(uint256 => MarketSettle) public settles;
+    mapping(uint256 => uint256) public marketFlags;
+    mapping(uint256 => mapping(address => Ticket)) public tickets;
+    mapping(uint256 => uint32) public participantCount;
+    mapping(uint256 => mapping(address => uint128)) public stakeByUser;
+    uint256 public oracleNonce;
+    mapping(bytes32 => bool) public usedOracleDigests;
+
+    constructor(
+        address owner_,
+        address guardian_,
+        address collateral_,
+        address oracleSigner_,
+        address feeVault_,
+        uint16 makerFeeBps_,
+        uint16 takerFeeBps_,
+        uint16 claimFeeBps_,
+        uint32 feeFloor_,
+        uint32 minOpen_,
+        uint32 minLockGap_,
+        uint32 minCloseGap_,
+        uint32 maxHorizon_,
+        uint128 minStake_,
+        uint128 maxStake_
+    ) LMX_Own2Step(owner_) LMX_Pause(guardian_) LMX_EIP712Domain("LamaXII", "12") {
+        if (collateral_ == address(0)) revert LMXx_BadAsset();
+        if (oracleSigner_ == address(0) || feeVault_ == address(0)) revert LMXx_BadCfg();
+        if (makerFeeBps_ > 950 || takerFeeBps_ > 950 || claimFeeBps_ > 950) revert LMXx_FeeTooHigh();
+        if (minStake_ == 0 || maxStake_ == 0 || minStake_ > maxStake_) revert LMXx_BadCfg();
+        if (minOpen_ < 7 || minLockGap_ < 31 || minCloseGap_ < 31 || maxHorizon_ < 180) revert LMXx_BadCfg();
+
+        COLLATERAL = IERC20(collateral_);
+        uint8 dec = 18;
+        (bool ok, bytes memory data) = collateral_.staticcall(abi.encodeWithSelector(IERC20Metadata.decimals.selector));
+        if (ok && data.length >= 32) dec = uint8(uint256(bytes32(data)));
+        COLLATERAL_DECIMALS = dec;
+
+        oracleSigner = oracleSigner_;
+        feeVault = feeVault_;
+        makerFeeBps = makerFeeBps_;
