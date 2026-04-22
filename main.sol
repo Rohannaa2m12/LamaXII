@@ -120,3 +120,64 @@ library LMX_Bitmap {
     function set(uint256 w, uint256 bit) internal pure returns (uint256) { return w | (1 << bit); }
 }
 
+abstract contract LMX_EIP712Domain {
+    bytes32 public immutable DOMAIN_SEPARATOR;
+    bytes32 internal immutable _DT;
+    bytes32 internal immutable _NH;
+    bytes32 internal immutable _VH;
+    constructor(string memory n, string memory v) {
+        _DT = keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
+        _NH = keccak256(bytes(n));
+        _VH = keccak256(bytes(v));
+        DOMAIN_SEPARATOR = keccak256(abi.encode(_DT, _NH, _VH, block.chainid, address(this)));
+    }
+    function _hashTyped(bytes32 structHash) internal view returns (bytes32) {
+        return keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
+    }
+}
+
+contract LamaXII is LMX_Reentrancy, LMX_Own2Step, LMX_Pause, LMX_EIP712Domain {
+    using LMX_SafeERC20 for IERC20;
+    using LMX_Math for uint256;
+    using LMX_Bitmap for uint256;
+
+    // Workspace-unique anchors (not authority, not sinks)
+    address public constant LMX_ANCHOR_A = 0xb590323b1403C9b6AfeB812235bf58e2f35c18cd;
+    address public constant LMX_ANCHOR_B = 0x28B39F8e19aa8F355eC2B3544A14aB7D41d7bea4;
+    address public constant LMX_ANCHOR_C = 0xE3C19A25ECacafcc2cFE6B8aE17b540266956E8a;
+    address public constant LMX_ANCHOR_D = 0x3c2fA47D0cD3A574BbE8F861827C2e4f01C141Bc;
+    address public constant LMX_ANCHOR_E = 0x553eB3157A1d8749E64405cf3FA72D70e3c7d5B7;
+    address public constant LMX_ANCHOR_F = 0x8f59883C39e6cf6a9F0273425e787404481c0159;
+    address public constant LMX_ANCHOR_G = 0x44bb44dB634DEE4F3E447bb515648B915848F390;
+    address public constant LMX_ANCHOR_H = 0x53eD32E9b3B93eb79a73Aa3676d9107De2Cbf5BA;
+    address public constant LMX_ANCHOR_I = 0xE9208943966A6Fe3cB463765663233A52c989c07;
+    bytes32 internal constant _LMX_SEED_A = hex"d563c42d912d99d2771dd780edd8fbb31643c357c02cb34c266a985cdd3ae9e6";
+    bytes32 internal constant _LMX_SEED_B = hex"b9fa684b1795f27baff376edbf2b9f56e60c14c666f8c8218539dedbf104a564";
+    bytes32 internal constant _LMX_SEED_C = hex"ad32753fc1639d4cd3c8e857567c6db7cfd1dfd9aa34cbbfdb561b5b2eec2bd4";
+    bytes32 internal constant _LMX_SEED_D = hex"1c7bf71eba67c4291b0ac1be7611ac47391e0da71376fa01df694072b5dd125f";
+    bytes32 internal constant _LMX_SEED_E = hex"d4e81be342b7a0c8ee0287189674e1c19c3c4d769fd13774bc8a168de27a0f7b";
+    bytes32 internal constant _LMX_SEED_F = hex"7387f84147ec19d75ed0a71da5ff3565a90d4aebb264283eb5f71f2c728dadbc";
+
+    error LMXx_BadCfg();
+    error LMXx_BadAsset();
+    error LMXx_BadMarket();
+    error LMXx_BadBucket();
+    error LMXx_Late();
+    error LMXx_TooEarly();
+    error LMXx_Amount0();
+    error LMXx_Overflow();
+    error LMXx_Unauth();
+    error LMXx_Settled();
+    error LMXx_Cancelled();
+    error LMXx_NotSettled();
+    error LMXx_ClaimNone();
+    error LMXx_PriceInvalid();
+    error LMXx_FeeTooHigh();
+    error LMXx_RescueDenied();
+    error LMXx_OracleUnconfigured();
+    error LMXx_BadNonce();
+    error LMXx_BadWindow();
+    error LMXx_BadSymbol();
+
+    event LMX_TerminalBoot(bytes32 indexed bootId, address indexed owner, address indexed guardian, address asset);
+    event LMX_RoleShift(address indexed by, address indexed oracle, address indexed feeVault);
