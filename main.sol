@@ -730,3 +730,64 @@ contract LamaXII is LMX_Reentrancy, LMX_Own2Step, LMX_Pause, LMX_EIP712Domain {
         uint256 x = LMX_Math.min(amount, bal);
         if (x == 0) return;
         COLLATERAL.safeTransfer(vault, x);
+        emit LMX_ProtocolSweep(vault, x);
+    }
+
+    function sweepMarketRemainder(uint256 marketId, address to, uint256 amount) external onlyOwner nonReentrant {
+        if (to == address(0)) revert LMXx_BadCfg();
+        if (!isSettled(marketId) && !isCancelled(marketId)) revert LMXx_TooEarly();
+        if (isSwept(marketId)) revert LMXx_BadCfg();
+        MarketFrame memory m = markets[marketId];
+        if (block.timestamp < uint256(m.closeAt) + 9 days) revert LMXx_TooEarly();
+        marketFlags[marketId] = marketFlags[marketId].set(_FLAG_SWEPT);
+        uint256 bal = COLLATERAL.balanceOf(address(this));
+        uint256 x = LMX_Math.min(amount, bal);
+        if (x == 0) return;
+        COLLATERAL.safeTransfer(to, x);
+        emit LMX_MarketSwept(marketId, x, to);
+    }
+
+    function rescueToken(address token, address to, uint256 amount) external onlyOwner nonReentrant {
+        if (token == address(COLLATERAL)) revert LMXx_RescueDenied();
+        if (to == address(0)) revert LMXx_BadCfg();
+        IERC20(token).transfer(to, amount);
+    }
+
+    function marketPhase(uint256 marketId) external view returns (uint8 phase) {
+        MarketFrame memory m = markets[marketId];
+        if (m.openAt == 0) return 255;
+        uint256 t = block.timestamp;
+        if (isCancelled(marketId)) return 90;
+        if (isSettled(marketId)) return 80;
+        if (t < m.openAt) return 0;
+        if (t < m.lockAt) return 1;
+        if (t < m.closeAt) return 2;
+        return 3;
+    }
+
+    function marketDigest(uint256 marketId) external view returns (bytes32 d) {
+        MarketFrame memory m = markets[marketId];
+        if (m.openAt == 0) revert LMXx_BadMarket();
+        MarketPools memory ps = pools[marketId];
+        d = keccak256(
+            abi.encode(
+                marketId,
+                m.symbol,
+                m.openAt,
+                m.lockAt,
+                m.closeAt,
+                m.strikeE8,
+                m.flatBandE8,
+                ps.poolUp,
+                ps.poolDown,
+                ps.poolFlat,
+                ps.poolTotal,
+                ps.feeTotal,
+                marketFlags[marketId]
+            )
+        );
+    }
+
+    function batchClaim(uint256[] calldata marketIds) external nonReentrant {
+        for (uint256 i = 0; i < marketIds.length; i++) {
+            _claimOne(marketIds[i], msg.sender);
