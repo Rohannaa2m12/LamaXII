@@ -425,3 +425,64 @@ contract LamaXII is LMX_Reentrancy, LMX_Own2Step, LMX_Pause, LMX_EIP712Domain {
         uint256 nowT = block.timestamp;
         if (openAt < nowT + LMX_MIN_OPEN) revert LMXx_BadWindow();
         if (lockAt < openAt + LMX_MIN_LOCK_GAP) revert LMXx_BadWindow();
+        if (closeAt < lockAt + LMX_MIN_CLOSE_GAP) revert LMXx_BadWindow();
+        if (closeAt > nowT + LMX_MAX_HORIZON) revert LMXx_BadWindow();
+        if (strikeE8 == 0) revert LMXx_BadCfg();
+        if (flatBandE8 == 0 || flatBandE8 > 5_000_000_000) revert LMXx_BadCfg();
+        uint256 marketId = ++marketCount;
+        markets[marketId] = MarketFrame(symbol, openAt, lockAt, closeAt, strikeE8, flatBandE8, maxBets, feeHint);
+        emit LMX_MarketListed(marketId, symbol, openAt, lockAt, closeAt);
+    }
+
+    function tweakMarket(
+        uint256 marketId,
+        uint64 newStrikeE8,
+        uint32 newFlatBandE8,
+        uint32 newMaxBets,
+        uint32 newFeeHint
+    ) external onlyOwner whenLive {
+        MarketFrame storage m = markets[marketId];
+        if (m.openAt == 0) revert LMXx_BadMarket();
+        if (isCancelled(marketId) || isSettled(marketId)) revert LMXx_BadCfg();
+        if (block.timestamp >= m.openAt) revert LMXx_Late();
+        if (newStrikeE8 == 0) revert LMXx_BadCfg();
+        if (newFlatBandE8 == 0 || newFlatBandE8 > 5_000_000_000) revert LMXx_BadCfg();
+        m.strikeE8 = newStrikeE8;
+        m.flatBandE8 = newFlatBandE8;
+        m.maxBets = newMaxBets;
+        m.feeHint = newFeeHint;
+    }
+
+    function previewPayout(uint256 marketId, address user) external view returns (uint256 gross, uint256 fee, uint256 net, bool winner) {
+        Ticket memory tk = tickets[marketId][user];
+        if (tk.stake == 0 || tk.claimed) return (0, 0, 0, false);
+        if (isCancelled(marketId)) return (tk.stake, 0, tk.stake, true);
+        if (!isSettled(marketId)) return (0, 0, 0, false);
+        MarketSettle memory st = settles[marketId];
+        if (tk.bucket != st.winnerBucket) return (0, 0, 0, false);
+        uint128 winPool = poolOf(marketId, st.winnerBucket);
+        if (winPool == 0) return (0, 0, 0, false);
+        MarketPools memory ps = pools[marketId];
+        gross = LMX_Math.mulDivDown(uint256(ps.poolTotal), uint256(tk.stake), uint256(winPool));
+        fee = LMX_Math.mulDivUp(gross, claimFeeBps, 10_000);
+        net = gross - fee;
+        winner = true;
+    }
+
+    function symbolKey(string calldata s) external pure returns (bytes32) {
+        return keccak256(bytes(s));
+    }
+
+    function cancelMarketBatch(uint256[] calldata ids, bytes32 reasonHash) external onlyOwner whenLive {
+        for (uint256 i = 0; i < ids.length; i++) {
+            uint256 marketId = ids[i];
+            if (markets[marketId].openAt == 0) revert LMXx_BadMarket();
+            if (isSettled(marketId)) revert LMXx_Settled();
+            if (isCancelled(marketId)) continue;
+            marketFlags[marketId] = marketFlags[marketId].set(_FLAG_CANCELLED);
+            emit LMX_MarketCancelled(marketId, reasonHash);
+        }
+    }
+
+    function marketRange(uint256 startId, uint256 endId)
+        external
