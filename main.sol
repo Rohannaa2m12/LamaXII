@@ -303,3 +303,64 @@ contract LamaXII is LMX_Reentrancy, LMX_Own2Step, LMX_Pause, LMX_EIP712Domain {
         oracleSigner = oracleSigner_;
         feeVault = feeVault_;
         makerFeeBps = makerFeeBps_;
+        takerFeeBps = takerFeeBps_;
+        claimFeeBps = claimFeeBps_;
+        feeFloor = feeFloor_;
+
+        LMX_MIN_OPEN = minOpen_;
+        LMX_MIN_LOCK_GAP = minLockGap_;
+        LMX_MIN_CLOSE_GAP = minCloseGap_;
+        LMX_MAX_HORIZON = maxHorizon_;
+        LMX_MIN_STAKE = minStake_;
+        LMX_MAX_STAKE = maxStake_;
+
+        bytes32 bootId = keccak256(
+            abi.encodePacked(
+                LMX_BOOT_SALT,
+                address(this),
+                block.chainid,
+                owner_,
+                guardian_,
+                collateral_,
+                oracleSigner_,
+                feeVault_,
+                block.timestamp,
+                block.prevrandao
+            )
+        );
+        emit LMX_TerminalBoot(bootId, owner_, guardian_, collateral_);
+        emit LMX_RoleShift(msg.sender, oracleSigner_, feeVault_);
+        emit LMX_FeeCurve(makerFeeBps_, takerFeeBps_, claimFeeBps_, feeFloor_);
+    }
+
+    receive() external payable { revert LMXx_BadCfg(); }
+    fallback() external payable { revert LMXx_BadCfg(); }
+
+    function isSettled(uint256 marketId) public view returns (bool) { return marketFlags[marketId].get(_FLAG_SETTLED); }
+    function isCancelled(uint256 marketId) public view returns (bool) { return marketFlags[marketId].get(_FLAG_CANCELLED); }
+    function isSwept(uint256 marketId) public view returns (bool) { return marketFlags[marketId].get(_FLAG_SWEPT); }
+
+    function quoteFee(uint256 stake, bool isTaker) public view returns (uint256 fee) {
+        uint256 bps = isTaker ? takerFeeBps : makerFeeBps;
+        fee = LMX_Math.mulDivUp(stake, bps, 10_000);
+        if (fee < feeFloor) fee = feeFloor;
+        if (fee > stake) fee = stake;
+    }
+
+    function previewBucket(uint64 strikeE8, uint32 flatBandE8, uint64 finalPriceE8) public pure returns (uint8) {
+        uint256 delta = LMX_Math.absDiff(uint256(finalPriceE8), uint256(strikeE8));
+        if (delta <= uint256(flatBandE8)) return _B_FLAT;
+        return finalPriceE8 > strikeE8 ? _B_UP : _B_DOWN;
+    }
+
+    function poolOf(uint256 marketId, uint8 bucket) public view returns (uint128) {
+        MarketPools memory ps = pools[marketId];
+        if (bucket == _B_UP) return ps.poolUp;
+        if (bucket == _B_DOWN) return ps.poolDown;
+        if (bucket == _B_FLAT) return ps.poolFlat;
+        revert LMXx_BadBucket();
+    }
+
+    function setRoles(address oracleSigner_, address feeVault_) external onlyOwner {
+        if (oracleSigner_ == address(0) || feeVault_ == address(0)) revert LMXx_BadCfg();
+        oracleSigner = oracleSigner_;
