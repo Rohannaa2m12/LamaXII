@@ -486,3 +486,64 @@ contract LamaXII is LMX_Reentrancy, LMX_Own2Step, LMX_Pause, LMX_EIP712Domain {
 
     function marketRange(uint256 startId, uint256 endId)
         external
+        view
+        returns (MarketFrame[] memory frames, MarketPools[] memory ps, MarketSettle[] memory st, uint256[] memory flags)
+    {
+        if (startId == 0 || endId < startId) revert LMXx_BadCfg();
+        uint256 last = LMX_Math.min(endId, marketCount);
+        uint256 n = last - startId + 1;
+        frames = new MarketFrame[](n);
+        ps = new MarketPools[](n);
+        st = new MarketSettle[](n);
+        flags = new uint256[](n);
+        uint256 k = 0;
+        for (uint256 id = startId; id <= last; id++) {
+            frames[k] = markets[id];
+            ps[k] = pools[id];
+            st[k] = settles[id];
+            flags[k] = marketFlags[id];
+            unchecked { k++; }
+        }
+    }
+
+    function marketPhases(uint256[] calldata ids) external view returns (uint8[] memory phases) {
+        phases = new uint8[](ids.length);
+        for (uint256 i = 0; i < ids.length; i++) {
+            uint256 marketId = ids[i];
+            MarketFrame memory m = markets[marketId];
+            if (m.openAt == 0) { phases[i] = 255; continue; }
+            uint256 t = block.timestamp;
+            if (isCancelled(marketId)) phases[i] = 90;
+            else if (isSettled(marketId)) phases[i] = 80;
+            else if (t < m.openAt) phases[i] = 0;
+            else if (t < m.lockAt) phases[i] = 1;
+            else if (t < m.closeAt) phases[i] = 2;
+            else phases[i] = 3;
+        }
+    }
+
+    function userTicket(uint256 marketId, address user) external view returns (uint128 stake, uint8 bucket, bool claimed, uint128 rawStake) {
+        Ticket memory tk = tickets[marketId][user];
+        stake = tk.stake;
+        bucket = tk.bucket;
+        claimed = tk.claimed;
+        rawStake = stakeByUser[marketId][user];
+    }
+
+    function userTickets(uint256[] calldata marketIds, address user)
+        external
+        view
+        returns (uint128[] memory stake, uint8[] memory bucket, bool[] memory claimed)
+    {
+        stake = new uint128[](marketIds.length);
+        bucket = new uint8[](marketIds.length);
+        claimed = new bool[](marketIds.length);
+        for (uint256 i = 0; i < marketIds.length; i++) {
+            Ticket memory tk = tickets[marketIds[i]][user];
+            stake[i] = tk.stake;
+            bucket[i] = tk.bucket;
+            claimed[i] = tk.claimed;
+        }
+    }
+
+    function quoteFees(uint256[] calldata stakes, bool isTaker) external view returns (uint256[] memory fees) {
