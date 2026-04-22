@@ -547,3 +547,64 @@ contract LamaXII is LMX_Reentrancy, LMX_Own2Step, LMX_Pause, LMX_EIP712Domain {
     }
 
     function quoteFees(uint256[] calldata stakes, bool isTaker) external view returns (uint256[] memory fees) {
+        fees = new uint256[](stakes.length);
+        for (uint256 i = 0; i < stakes.length; i++) {
+            fees[i] = quoteFee(stakes[i], isTaker);
+        }
+    }
+
+    function previewBucketForMarket(uint256 marketId, uint64 finalPriceE8) external view returns (uint8 bucket) {
+        MarketFrame memory m = markets[marketId];
+        if (m.openAt == 0) revert LMXx_BadMarket();
+        bucket = previewBucket(m.strikeE8, m.flatBandE8, finalPriceE8);
+    }
+
+    function previewBucketsForMarket(uint256 marketId, uint64[] calldata pricesE8) external view returns (uint8[] memory buckets) {
+        MarketFrame memory m = markets[marketId];
+        if (m.openAt == 0) revert LMXx_BadMarket();
+        buckets = new uint8[](pricesE8.length);
+        for (uint256 i = 0; i < pricesE8.length; i++) {
+            buckets[i] = previewBucket(m.strikeE8, m.flatBandE8, pricesE8[i]);
+        }
+    }
+
+    function protocolBalance() external view returns (uint256 bal, uint256 listedMarkets, uint256 nowTs) {
+        bal = COLLATERAL.balanceOf(address(this));
+        listedMarkets = marketCount;
+        nowTs = block.timestamp;
+    }
+
+    function marketTimers(uint256 marketId) external view returns (uint256 nowTs, uint256 openAt, uint256 lockAt, uint256 closeAt, int256 toOpen, int256 toLock, int256 toClose) {
+        MarketFrame memory m = markets[marketId];
+        if (m.openAt == 0) revert LMXx_BadMarket();
+        nowTs = block.timestamp;
+        openAt = m.openAt;
+        lockAt = m.lockAt;
+        closeAt = m.closeAt;
+        toOpen = int256(openAt) - int256(nowTs);
+        toLock = int256(lockAt) - int256(nowTs);
+        toClose = int256(closeAt) - int256(nowTs);
+    }
+
+    function isBettingOpen(uint256 marketId) external view returns (bool) {
+        MarketFrame memory m = markets[marketId];
+        if (m.openAt == 0) return false;
+        if (isCancelled(marketId) || isSettled(marketId)) return false;
+        uint256 t = block.timestamp;
+        return t >= m.openAt && t < m.lockAt;
+    }
+
+    function isClosable(uint256 marketId) external view returns (bool) {
+        MarketFrame memory m = markets[marketId];
+        if (m.openAt == 0) return false;
+        if (isCancelled(marketId) || isSettled(marketId)) return false;
+        return block.timestamp >= m.closeAt;
+    }
+
+    function terminalVersion() external pure returns (bytes32 build) {
+        build = keccak256("LamaXII.terminal.build.12");
+    }
+
+    function bucketLabel(uint8 bucket) external pure returns (bytes32) {
+        if (bucket == _B_UP) return keccak256("LMX.BUCKET.UP");
+        if (bucket == _B_DOWN) return keccak256("LMX.BUCKET.DOWN");
