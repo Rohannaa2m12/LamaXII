@@ -791,3 +791,64 @@ contract LamaXII is LMX_Reentrancy, LMX_Own2Step, LMX_Pause, LMX_EIP712Domain {
     function batchClaim(uint256[] calldata marketIds) external nonReentrant {
         for (uint256 i = 0; i < marketIds.length; i++) {
             _claimOne(marketIds[i], msg.sender);
+        }
+    }
+
+    function _claimOne(uint256 marketId, address user) internal {
+        Ticket storage tk = tickets[marketId][user];
+        if (tk.claimed || tk.stake == 0) return;
+        if (isCancelled(marketId)) {
+            tk.claimed = true;
+            uint128 back = tk.stake;
+            if (back != 0) COLLATERAL.safeTransfer(user, back);
+            emit LMX_Claimed(marketId, user, back, back, tk.bucket);
+            return;
+        }
+        if (!isSettled(marketId)) return;
+        MarketSettle memory st = settles[marketId];
+        MarketPools memory ps = pools[marketId];
+        uint8 b = tk.bucket;
+        uint128 userStake = tk.stake;
+        uint128 winPool = poolOf(marketId, st.winnerBucket);
+        tk.claimed = true;
+        if (b != st.winnerBucket || winPool == 0) {
+            emit LMX_Claimed(marketId, user, 0, 0, b);
+            return;
+        }
+        uint256 gross = LMX_Math.mulDivDown(uint256(ps.poolTotal), uint256(userStake), uint256(winPool));
+        if (gross > type(uint128).max) revert LMXx_Overflow();
+        uint256 fee = LMX_Math.mulDivUp(gross, claimFeeBps, 10_000);
+        uint256 net = gross - fee;
+        if (net > type(uint128).max) revert LMXx_Overflow();
+        pools[marketId].feeTotal = uint128(uint256(pools[marketId].feeTotal) + fee);
+        if (net != 0) COLLATERAL.safeTransfer(user, net);
+        emit LMX_Claimed(marketId, user, uint128(net), 0, b);
+    }
+
+    function rotateOracleBySig(
+        address nextOracle,
+        uint256 effectiveAt,
+        uint256 nonce,
+        bytes32 memo,
+        bytes calldata sig
+    ) external nonReentrant {
+        if (nextOracle == address(0)) revert LMXx_BadCfg();
+        bytes32 structHash = keccak256(abi.encode(LMX_ORACLE_ROTATE_TYPEHASH, nextOracle, effectiveAt, nonce, memo));
+        bytes32 digest = _hashTyped(structHash);
+        if (usedOracleDigests[digest]) revert LMXx_BadNonce();
+        usedOracleDigests[digest] = true;
+        address signer = LMX_ECDSA.recover(digest, sig);
+        if (signer != owner) revert LMXx_Unauth();
+
+        if (effectiveAt > block.timestamp) {
+            scheduledOracle = nextOracle;
+            scheduledOracleAt = uint40(effectiveAt);
+            scheduledOracleMemo = memo;
+            emit LMX_OracleScheduled(nextOracle, uint40(effectiveAt), memo);
+            return;
+        }
+        oracleSigner = nextOracle;
+        emit LMX_OracleActivated(nextOracle, msg.sender);
+        emit LMX_RoleShift(msg.sender, oracleSigner, feeVault);
+    }
+
