@@ -913,3 +913,64 @@ contract LamaXII is LMX_Reentrancy, LMX_Own2Step, LMX_Pause, LMX_EIP712Domain {
         uint256 n = ids.length;
         ms = new MarketFrame[](n);
         ps = new MarketPools[](n);
+        st = new MarketSettle[](n);
+        flags = new uint256[](n);
+        participants = new uint32[](n);
+        phase = new uint8[](n);
+        for (uint256 i; i < n; i++) {
+            uint256 marketId = ids[i];
+            MarketFrame memory m = markets[marketId];
+            if (m.openAt == 0) revert LMXx_BadMarket();
+            ms[i] = m;
+            ps[i] = pools[marketId];
+            st[i] = settles[marketId];
+            flags[i] = marketFlags[marketId];
+            participants[i] = participantCount[marketId];
+            if (isCancelled(marketId)) phase[i] = 90;
+            else if (isSettled(marketId)) phase[i] = 80;
+            else {
+                uint256 t = block.timestamp;
+                if (t < m.openAt) phase[i] = 0;
+                else if (t < m.lockAt) phase[i] = 1;
+                else if (t < m.closeAt) phase[i] = 2;
+                else phase[i] = 3;
+            }
+        }
+    }
+
+    function userPosition(uint256 marketId, address user)
+        external
+        view
+        returns (uint256 up, uint256 down, uint256 flat, uint256 total, bool hasClaimed, uint8 claimState)
+    {
+        MarketFrame memory m = markets[marketId];
+        if (m.openAt == 0) revert LMXx_BadMarket();
+        MarketUser memory u = users[marketId][user];
+        up = u.up;
+        down = u.down;
+        flat = u.flat;
+        total = u.total;
+        hasClaimed = (u.flags & U_CLAIMED) != 0;
+
+        // claimState:
+        // 0 = not final, 1 = claimable (settled), 2 = refundable (cancelled), 3 = already claimed, 4 = no position
+        if (total == 0) claimState = 4;
+        else if (hasClaimed) claimState = 3;
+        else if (isCancelled(marketId)) claimState = 2;
+        else if (isSettled(marketId)) claimState = 1;
+        else claimState = 0;
+    }
+
+    function estimateClaim(uint256 marketId, address user) external view returns (uint256 payout, uint8 mode) {
+        MarketFrame memory m = markets[marketId];
+        if (m.openAt == 0) revert LMXx_BadMarket();
+        MarketUser memory u = users[marketId][user];
+        if (u.total == 0) return (0, 0);
+        if ((u.flags & U_CLAIMED) != 0) return (0, 3);
+
+        if (isCancelled(marketId)) {
+            return (u.total, 2);
+        }
+
+        MarketSettle memory st = settles[marketId];
+        if ((st.flags & SETTLED) == 0) return (0, 0);
