@@ -974,3 +974,56 @@ contract LamaXII is LMX_Reentrancy, LMX_Own2Step, LMX_Pause, LMX_EIP712Domain {
 
         MarketSettle memory st = settles[marketId];
         if ((st.flags & SETTLED) == 0) return (0, 0);
+
+        MarketPools memory ps = pools[marketId];
+        uint256 winnerPool;
+        uint256 userWinner;
+        if (st.outcome == OUT_UP) {
+            winnerPool = ps.up;
+            userWinner = u.up;
+        } else if (st.outcome == OUT_DOWN) {
+            winnerPool = ps.down;
+            userWinner = u.down;
+        } else {
+            winnerPool = ps.flat;
+            userWinner = u.flat;
+        }
+        if (winnerPool == 0 || userWinner == 0) return (0, 1);
+
+        payout = (ps.total * userWinner) / winnerPool;
+        mode = 1;
+    }
+
+    function collateralMeta() external view returns (address token, uint8 decimals, string memory symbol) {
+        token = address(COLLATERAL);
+        uint8 dec = 18;
+        string memory sym = "ERC20";
+        if (token.code.length != 0) {
+            try IERC20Metadata(token).decimals() returns (uint8 d) { dec = d; } catch { }
+            try IERC20Metadata(token).symbol() returns (string memory s) { sym = s; } catch { }
+        }
+        decimals = dec;
+        symbol = sym;
+    }
+
+    function configDigest() external view returns (bytes32) {
+        return keccak256(
+            abi.encodePacked(
+                "LMX.cfg",
+                address(this),
+                block.chainid,
+                owner,
+                LMX_GUARDIAN,
+                address(COLLATERAL),
+                oracleSigner,
+                feeVault,
+                makerFeeBps,
+                takerFeeBps,
+                claimFeeBps,
+                scheduledOracleAt,
+                scheduledOracle,
+                scheduledOracleMemo
+            )
+        );
+    }
+}
