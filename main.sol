@@ -852,3 +852,64 @@ contract LamaXII is LMX_Reentrancy, LMX_Own2Step, LMX_Pause, LMX_EIP712Domain {
         emit LMX_RoleShift(msg.sender, oracleSigner, feeVault);
     }
 
+    function executeScheduledOracle() external nonReentrant {
+        uint40 at = scheduledOracleAt;
+        address next = scheduledOracle;
+        if (at == 0 || next == address(0)) revert LMXx_BadCfg();
+        if (block.timestamp < at) revert LMXx_TooEarly();
+        scheduledOracleAt = 0;
+        scheduledOracle = address(0);
+        scheduledOracleMemo = bytes32(0);
+        oracleSigner = next;
+        emit LMX_OracleActivated(next, msg.sender);
+        emit LMX_RoleShift(msg.sender, oracleSigner, feeVault);
+    }
+
+    function terminalFingerprint() external view returns (bytes32 fp) {
+        fp = keccak256(
+            abi.encodePacked(
+                "LMX.fp",
+                address(this),
+                block.chainid,
+                owner,
+                LMX_GUARDIAN,
+                address(COLLATERAL),
+                oracleSigner,
+                feeVault,
+                makerFeeBps,
+                takerFeeBps,
+                claimFeeBps
+            )
+        );
+    }
+
+    function marketSnapshot(uint256 marketId)
+        external
+        view
+        returns (MarketFrame memory m, MarketPools memory ps, MarketSettle memory st, uint256 flags, uint32 participants, uint8 phase)
+    {
+        m = markets[marketId];
+        if (m.openAt == 0) revert LMXx_BadMarket();
+        ps = pools[marketId];
+        st = settles[marketId];
+        flags = marketFlags[marketId];
+        participants = participantCount[marketId];
+        if (isCancelled(marketId)) phase = 90;
+        else if (isSettled(marketId)) phase = 80;
+        else {
+            uint256 t = block.timestamp;
+            if (t < m.openAt) phase = 0;
+            else if (t < m.lockAt) phase = 1;
+            else if (t < m.closeAt) phase = 2;
+            else phase = 3;
+        }
+    }
+
+    function marketSnapshots(uint256[] calldata ids)
+        external
+        view
+        returns (MarketFrame[] memory ms, MarketPools[] memory ps, MarketSettle[] memory st, uint256[] memory flags, uint32[] memory participants, uint8[] memory phase)
+    {
+        uint256 n = ids.length;
+        ms = new MarketFrame[](n);
+        ps = new MarketPools[](n);
